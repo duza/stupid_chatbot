@@ -1,14 +1,16 @@
 import time
-import slackclient
 import os
 import requests
+import slackclient
 
 
 def open(token):
     return StubAPI(token)
 
+
 def open_slack(token):
-    return Slack(token) 
+    return Slack(token)
+
 
 class StubAPI:
 
@@ -29,7 +31,8 @@ class StubAPI:
         pass
 
     def is_server_connected(self):
-        pass    
+        pass
+
 
 class Slack(StubAPI):
     def __init__(self, token):
@@ -48,6 +51,7 @@ class Slack(StubAPI):
     def write(self, messages):
         self.sc.rtm_send_message(messages.channel, messages.text)
 
+
 class Message:
 
     def __init__(self, text, channel=None, author=None):
@@ -59,14 +63,16 @@ class Message:
         return 'Message with text {} for channel {} written by {}'.format(
             self.text, self.channel, self.author)
 
+
 def get_slack_user(user_id):
     url_user = 'https://slack.com/api/users.info?token={}&user={}&pretty=1'.format(
-                                    os.environ["SLACK_API_TOKEN"], user_id,
-                                )
+        os.environ["SLACK_API_TOKEN"], user_id,
+    )
     resp = requests.get(url_user)
     if resp.status_code == 200:
         return resp.json().get('user')
     return None
+
 
 def process(messages):
     responses = []
@@ -78,10 +84,10 @@ def process(messages):
                     if any(phrase in text.lower() for phrase in ('hi', 'hello', 'hey',)):
                         if msg.get('channel'):
                             user = msg.get('user')
-                            user = get_slack_user(user) if user else ''                            
+                            user = get_slack_user(user) if user else ''
                             responses.append(Message('Hi, {}!'.format(
-                                user.get('real_name','Unknown')
-                                ), msg.get('channel')))
+                                user.get('real_name', 'Unknown')
+                            ), msg.get('channel')))
                     # elif text.startswith('/teapot'):
                         # responses.append(teapot())
                     # elif msg.text.startswith('/author'):
@@ -119,7 +125,7 @@ def main():
                 outgoing_queue.extend(process(incoming_queue))
             time.sleep(10)
     else:
-        print('Connection failed')        
+        print('Connection failed')
     # while True:
     #     print('In start: Incoming - {}, Outgoing - {}'.format(
     #         incoming_queue, outgoing_queue))
