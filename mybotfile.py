@@ -1,7 +1,8 @@
 import time
 import os
-import requests
 import slackclient
+
+GREETINGS = ('hi', 'hello', 'hey',)
 
 
 def open(token):
@@ -24,14 +25,13 @@ class StubAPI:
                 ]
 
     def write(self, messages):
-        pass
         print(messages)
 
     def is_connected(self):
-        pass
+        return True
 
     def is_server_connected(self):
-        pass
+        return True
 
 
 class Slack(StubAPI):
@@ -46,54 +46,82 @@ class Slack(StubAPI):
         return self.sc.server.connected
 
     def read(self):
-        return self.sc.rtm_read()
+        # This method returns not Message objects but raw events from Slack API
+        # This means that other functions should know about expected structure
+        # and this breaks the idea of Single Responsibility and code isolation
+        events = self.sc.rtm_read()
+        if events:
+            return [
+                Message(
+                    event.get('text'),
+                    event.get('channel'),
+                    self.get_author(event.get('user')),
+                )
+                for event in events if event.get('type') == 'message'
+            ]
+        return []
 
     def write(self, messages):
         self.sc.rtm_send_message(messages.channel, messages.text)
 
+    def get_user(self, user_id):
+        resp = self.sc.api_call('users.info', user=user_id)
+        if not resp['ok']:
+            raise ValueError('User not found')
+        return resp.get('user')
+
+    def get_author(self, user_id):
+        if user_id:
+            author = {}
+            author['id'] = user_id
+            user = self.get_user(user_id)
+            author['name'] = user['name']
+            author['real_name'] = user['real_name']
+            return author
+        return None
+
 
 class Message:
-
     def __init__(self, text, channel=None, author=None):
         self.text = text
         self.channel = channel
         self.author = author
 
     def __repr__(self):
-        return 'Message with text {} for channel {} written by {}'.format(
+        return '<Message: text="{}", channel="{}", author="{}">'.format(
             self.text, self.channel, self.author)
 
 
-def get_slack_user(user_id):
-    url_user = 'https://slack.com/api/users.info?token={}&user={}&pretty=1'.format(
-        os.environ["SLACK_API_TOKEN"], user_id,
-    )
-    resp = requests.get(url_user)
-    if resp.status_code == 200:
-        return resp.json().get('user')
-    return None
+def is_greeting(lowercased_text):
+    """This small function makes a decision. We can test it also ;)
+    >>> is_greeting('hello, world')
+    True
+    >>> is_greeting('hey jude')
+    True
+    >>> is_greeting('hi there')
+    True
+    >>> is_greeting('¡hola!')
+    False
+    >>> is_greeting('chip and dale')
+    True
+    """
+    return any(phrase in lowercased_text for phrase in GREETINGS)
 
 
 def process(messages):
     responses = []
     for msg in messages:
-        if isinstance(msg, dict):
-            if 'text' in msg:
-                text = msg.get('text')
-                if isinstance(text, str):
-                    if any(phrase in text.lower() for phrase in ('hi', 'hello', 'hey',)):
-                        if msg.get('channel'):
-                            user = msg.get('user')
-                            user = get_slack_user(user) if user else ''
-                            responses.append(Message('Hi, {}!'.format(
-                                user.get('real_name', 'Unknown')
-                            ), msg.get('channel')))
-                    # elif text.startswith('/teapot'):
-                        # responses.append(teapot())
-                    # elif msg.text.startswith('/author'):
-                        # responses.append(teapot())
-                    else:
-                        echo(msg)
+        if isinstance(msg, Message):
+            text, channel, author = msg.text, msg.channel, msg.author
+            if channel and is_greeting(text.lower()):
+                name = author.get('real_name', 'Unknown')
+                responses.append(Message('Hi, {}!'.format(name), msg.channel))
+            # elif text.startswith('/teapot'):
+            # responses.append(teapot())
+            # elif msg.text.startswith('/author'):
+            # responses.append(teapot())
+            else:
+                echo(msg)
     return responses
 
 
@@ -112,33 +140,20 @@ def author():
 def main():
     incoming_queue = []
     outgoing_queue = []
-    # custom_api = open('token')
     custom_api = open_slack(os.environ["SLACK_API_TOKEN"])
-    if custom_api.is_connected():
-        while custom_api.is_server_connected() is True:
-            if len(outgoing_queue):
-                outgoing_message = outgoing_queue.pop(0)
-                custom_api.write(outgoing_message)
-            incoming_queue = custom_api.read()
-            print(incoming_queue)
-            if len(incoming_queue):
-                outgoing_queue.extend(process(incoming_queue))
-            time.sleep(10)
-    else:
+    if not custom_api.is_connected():
         print('Connection failed')
-    # while True:
-    #     print('In start: Incoming - {}, Outgoing - {}'.format(
-    #         incoming_queue, outgoing_queue))
-    #     if len(outgoing_queue):
-    #         outgoing_message = outgoing_queue.pop(0)
-    #         custom_api.write(outgoing_message)
-    #     if len(incoming_queue):
-    #         incoming_messages = custom_api.read()
-    #         outgoing_queue.extend(process(incoming_messages))
-    #     print('Incoming - {}, Outgoing - {}'.format(incoming_queue,
-    #                                                 outgoing_queue))
-        # time.sleep(10)
-    return
+        exit(1)
+    while custom_api.is_server_connected() is True:
+        if outgoing_queue:
+            for outgoing_message in outgoing_queue:
+                custom_api.write(outgoing_message)
+            outgoing_queue.clear()
+        incoming_queue = custom_api.read()
+        print(incoming_queue)
+        if incoming_queue:
+            outgoing_queue.extend(process(incoming_queue))
+        time.sleep(10)
 
 
 if __name__ == '__main__':
